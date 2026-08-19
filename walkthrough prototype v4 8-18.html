@@ -815,26 +815,30 @@ function levenshtein(a,b){
   return dp[m][n];
 }
 
-// ---------- description reorder: Issue — Location ----------
+// ---------- description suffix: keep original wording, append — Location ----------
+// Preserves exactly what was said/typed (only capitalizes the first letter)
+// and appends " — <Location>" at the end when a room/area word is found, so
+// nothing gets reworded or dropped out of the middle of the sentence. Phrase
+// matching uses word boundaries so a phrase like "shower" doesn't falsely
+// match inside a compound word like "showerhead".
 function reorderDescription(raw){
-  let text = raw.trim();
-  const low = text.toLowerCase();
+  const text = raw.trim();
+  if(!text) return text;
+  const capped = text.charAt(0).toUpperCase() + text.slice(1);
   for(const phrase of LOCATION_PHRASES){
-    const idx = low.indexOf(phrase);
-    if(idx !== -1){
-      let before = text.slice(0, idx);
-      let after = text.slice(idx + phrase.length);
-      let issue = (before + ' ' + after)
-        .replace(/\b(at|in|on|near|inside|of|the)\b/gi, ' ')
-        .replace(/\s+/g,' ').trim();
-      issue = issue.replace(/^(is|has|has a|there is|there's)\s+/i,'').trim();
-      if(!issue) continue;
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('\\b' + escaped + '\\b', 'i');
+    if(re.test(text)){
       const locTitle = phrase.replace(/\b\w/g, c=>c.toUpperCase());
-      const issueCap = issue.charAt(0).toUpperCase() + issue.slice(1);
-      return issueCap + ' — ' + locTitle;
+      return capped + ' — ' + locTitle;
     }
   }
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  // No explicit room word said -- fall back to the appliance/fixture-implied
+  // area (e.g. "microwave" -> Kitchen) so the same reference gets added
+  // whenever we can be confident about it.
+  const impliedArea = matchArea(text);
+  if(impliedArea) return capped + ' — ' + impliedArea;
+  return capped;
 }
 
 // ---------- CAPTURE ----------
@@ -1134,27 +1138,86 @@ function renderLog(){
   renderInlineList();
 }
 
-// Sort key mirrors the export sort: building line groups (last two digits =
-// unit position on the floor), then floor (the digit(s) before that), so
-// units read 01,02,03,04 then next floor 01,02,03,04 rather than capture order.
+// Sort key drives both the export order and the on-screen list order.
+// Grouping is: building, then Paseo (A, then B, then C), then floor
+// (1, 2, 3), then unit position on that floor (01-04/05-08/09-12) — so
+// within a building you get all of Paseo A top-to-bottom by floor, then
+// all of Paseo B, then all of Paseo C, regardless of the order items were
+// actually captured in.
 function unitSortKey(u){
   const digits = String(u||'').replace(/\D/g,'');
-  if(digits.length<3) return {floor:0, pos: parseInt(digits||'0',10), raw:String(u)};
-  const pos = parseInt(digits.slice(-2),10);
-  const floor = parseInt(digits.slice(0,-2),10);
-  return {floor, pos, raw:String(u)};
+  const building = buildingNumberFromUnit(digits) || 0;
+  let floor = 0, pos = 0;
+  if(digits.length===5){ floor = parseInt(digits.slice(2,3),10)||0; pos = parseInt(digits.slice(3,5),10)||0; }
+  else if(digits.length===4){ floor = parseInt(digits.slice(1,2),10)||0; pos = parseInt(digits.slice(2,4),10)||0; }
+  else { pos = parseInt(digits,10)||0; }
+  const paseo = paseoFromUnit(digits);
+  const paseoRank = paseo==='A' ? 0 : paseo==='B' ? 1 : paseo==='C' ? 2 : 3;
+  return { building, paseoRank, floor, pos, raw:String(u) };
 }
 function compareUnits(a,b){
   const ka = unitSortKey(a), kb = unitSortKey(b);
+  if(ka.building!==kb.building) return ka.building-kb.building;
+  if(ka.paseoRank!==kb.paseoRank) return ka.paseoRank-kb.paseoRank;
   if(ka.floor!==kb.floor) return ka.floor-kb.floor;
   if(ka.pos!==kb.pos) return ka.pos-kb.pos;
   return ka.raw.localeCompare(kb.raw);
 }
-const LOCATION_SORT_ORDER = {Exterior:0, Patio:1, Unit:2};
+const LOCATION_SORT_ORDER = {Exterior:0, Patio:1, Unit:2}; // reserved for a future custom walk-sequence feature (see below) -- not used by the default sort
+// Default within-unit order: whatever order items were actually captured
+// in (oldest first), full stop -- no forced Exterior/Patio/Unit grouping.
+// If something's said out of the "normal" walk order (e.g. an exterior item
+// after already being inside the unit), it stays exactly where it was said.
+// This is the single sort used everywhere an item list is shown or numbered
+// (on-screen list, export, and per-unit item numbering).
+// Future: this is the natural place to plug in a custom sequence defined
+// from a unit's floorplan/drawing (e.g. exterior -> patio -> back bathroom
+// -> back bedroom -> ...) once that's been mapped out, so items auto-sort
+// into the "correct" walk order regardless of what order they're captured in.
 function compareItemsWithinUnit(a,b){
-  const la = LOCATION_SORT_ORDER[a.location] ?? 3;
-  const lb = LOCATION_SORT_ORDER[b.location] ?? 3;
-  return la-lb;
+  return (a.n||0)-(b.n||0);
+}
+
+// Remembers whether "duplicate this item only" or "duplicate the whole
+// dependency chain" was chosen for a given item, between the choice prompt
+// and the unit-scope panel underneath it (Apply / All units in building).
+let dupChainSelection = {};
+
+// Finds every item connected to cid through dependsOn links, walking both up
+// toward the root of the chain and down toward its dependents, then returns
+// them in root-first (dependency) order -- e.g. item 1, then item 2 that
+// depends on it, then item 3 that depends on item 2, etc.
+function getDependencyChain(cid){
+  const start = captured.find(x=>x.cid===cid);
+  if(!start) return [];
+  const visited = new Set([cid]);
+  const queue = [cid];
+  while(queue.length){
+    const current = queue.shift();
+    const item = captured.find(x=>x.cid===current);
+    if(item && item.dependsOn && !visited.has(item.dependsOn)){
+      visited.add(item.dependsOn); queue.push(item.dependsOn);
+    }
+    captured.filter(x=>x.dependsOn===current).forEach(child=>{
+      if(!visited.has(child.cid)){ visited.add(child.cid); queue.push(child.cid); }
+    });
+  }
+  const chainItems = Array.from(visited).map(id=>captured.find(x=>x.cid===id)).filter(Boolean);
+  const ordered = [];
+  const remaining = new Set(chainItems.map(i=>i.cid));
+  while(remaining.size){
+    let progressed = false;
+    chainItems.forEach(it=>{
+      if(remaining.has(it.cid) && (!it.dependsOn || !remaining.has(it.dependsOn))){
+        ordered.push(it); remaining.delete(it.cid); progressed = true;
+      }
+    });
+    if(!progressed){ // safety valve in case of a data oddity/cycle
+      remaining.forEach(id=>{ ordered.push(chainItems.find(i=>i.cid===id)); });
+      remaining.clear();
+    }
+  }
+  return ordered;
 }
 
 // ---------- UNIT FILTER TABS (filters the inline list below, no popup) ----------
@@ -1190,19 +1253,35 @@ function renderInlineList(){
   bindItemCardHandlers(el);
 }
 
+// Position of this item within its own unit (1, 2, 3...), based on creation
+// Position of this item within its own unit (1, 2, 3...), following the same
+// walk-sequence order used everywhere else (Exterior, then Patio, then Unit,
+// chronological within each) -- so the number always matches where the item
+// actually sits in the on-screen list and in the export, no matter what
+// order things were said in during the walk. Computed on the fly so it
+// always stays accurate as items are added, deleted, or duplicated --
+// nothing is ever baked into the stored description text.
+function unitItemNumber(item){
+  if(!item || !item.unit) return null;
+  const sameUnit = captured.filter(it=>it.unit===item.unit).slice().sort(compareItemsWithinUnit);
+  const idx = sameUnit.findIndex(it=>it.cid===item.cid);
+  return idx===-1 ? null : idx+1;
+}
+
 // Renders one compact item card. Icon-only action row keeps it tight: photo,
 // chain-link (add a dependent item), edit (opens the consolidated edit form),
 // duplicate (reuses the existing all-units/specific-units scope flow), pin,
 // and delete.
 function renderItemCard(it){
   const parent = it.dependsOn ? captured.find(x=>x.cid===it.dependsOn) : null;
+  const myNum = unitItemNumber(it);
   return `
     <div class="item-modal-row" data-cid="${it.cid}">
       <div class="meta">#${it.n} \u00b7 UNIT ${it.unit||'?'} ${it.paseo?('\u00b7 PASEO '+it.paseo):''} \u00b7 ${it.location || 'Location?'}</div>
-      ${parent ? `<div class="meta" style="color:#B8862E;">\ud83d\udd17 Depends on: ${parent.desc.slice(0,60)}${parent.desc.length>60?'\u2026':''}</div>` : ''}
+      ${parent ? `<div class="meta" style="color:#B8862E;">\ud83d\udd17 Depends on item: ${parent.unit||'?'}-${unitItemNumber(parent) ?? '?'}</div>` : ''}
       ${it.photo ? `<img src="${it.photo}" style="max-width:110px;border-radius:8px;margin:4px 0;display:block;">` : ''}
       ${(it.photos && it.photos.length) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0;">${it.photos.map(p=>`<img src="${p}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`).join('')}</div>` : ''}
-      <div class="desc">${it.desc}</div>
+      <div class="desc">${myNum!=null ? myNum+'. ' : ''}${it.desc}</div>
       <div class="meta">${it.sub ? it.sub + ' (' + it.trade + ')' : 'Subcontractor not detected'}${it.area ? ' \u00b7 ' + it.area : ''}</div>
       <div class="icon-row">
         <button class="icon-btn add-photo-btn" data-cid="${it.cid}" title="Add photo">\ud83d\udcf7</button>
@@ -1339,12 +1418,41 @@ function bindItemCardHandlers(container){
     btn.addEventListener('click', ()=>{
       const cid = btn.getAttribute('data-cid');
       const panel = container.querySelector(`.dup-scope[data-scope-for="${cid}"]`);
-      if(panel) panel.style.display = panel.style.display==='none' ? 'block' : 'none';
+      const chain = getDependencyChain(cid);
+      if(chain.length<=1){
+        dupChainSelection[cid] = 'single';
+        if(panel) panel.style.display = panel.style.display==='none' ? 'block' : 'none';
+        return;
+      }
+      // Part of a dependency chain -- ask whether to duplicate just this
+      // item or the whole linked sequence before opening the scope panel.
+      const listText = chain.map((it,i)=> (i+1)+') '+it.desc).join('\n');
+      showModal(
+        'This item is linked in a dependency chain of ' + chain.length + ' item(s):\n' + listText + '\n\nDuplicate just this item, or the whole chain?',
+        [
+          { label:'This item only', primary:false, onClick: ()=>{
+              dupChainSelection[cid] = 'single';
+              if(panel) panel.style.display = 'block';
+            } },
+          { label:'Whole chain (' + chain.length + ')', primary:true, onClick: ()=>{
+              dupChainSelection[cid] = 'chain';
+              if(panel) panel.style.display = 'block';
+            } }
+        ]
+      );
+      const msgEl = document.getElementById('customModalMessage');
+      if(msgEl) msgEl.style.whiteSpace = 'pre-line';
     });
   });
   container.querySelectorAll('.scope-all-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      applyBlanketItem(btn.getAttribute('data-cid'));
+      const cid = btn.getAttribute('data-cid');
+      if(dupChainSelection[cid]==='chain'){
+        const source = captured.find(it=>it.cid===cid);
+        applyBlanketChainToScope(cid, getBuildingUnitRoster(source ? source.unit : null));
+      } else {
+        applyBlanketItem(cid);
+      }
       renderLog();
     });
   });
@@ -1353,7 +1461,18 @@ function bindItemCardHandlers(container){
       const cid = btn.getAttribute('data-cid');
       const input = container.querySelector(`.scope-units-input[data-cid="${cid}"]`);
       const raw = input ? input.value : '';
-      applyBlanketItemToUnits(cid, raw);
+      if(dupChainSelection[cid]==='chain'){
+        const source = captured.find(it=>it.cid===cid);
+        const allUnits = getBuildingUnitRoster(source ? source.unit : null);
+        const targetUnits = resolveUnitsFromScopeText(raw, allUnits);
+        if(targetUnits.length===0){
+          showAlert('Could not match any units from "'+raw+'". Try unit endings like 01, 02 or full unit numbers.');
+          return;
+        }
+        applyBlanketChainToScope(cid, targetUnits);
+      } else {
+        applyBlanketItemToUnits(cid, raw);
+      }
       renderLog();
     });
   });
@@ -1736,6 +1855,46 @@ function applyBlanketToScope(cid, targetUnits){
   renderRecap(); // refresh recap counts if panel is open
 }
 
+// Duplicates a whole dependency chain (not just one item) to each target
+// unit, recreating the same dependsOn links between the newly created
+// copies in that unit -- so the new unit gets its own linked sequence
+// instead of items pointing back at the original chain. Items are created
+// in root-first order so a child's dependsOn can always be remapped to its
+// already-created parent's new cid.
+function applyBlanketChainToScope(cid, targetUnits){
+  const chain = getDependencyChain(cid);
+  if(chain.length<=1){ applyBlanketToScope(cid, targetUnits); return; }
+  targetUnits.forEach(u=>{
+    const idMap = {}; // original cid -> newly created cid, for this unit
+    chain.forEach(source=>{
+      const existing = captured.find(it=>it.unit===u && norm(it.desc)===norm(source.desc));
+      if(existing){
+        idMap[source.cid] = existing.cid;
+        return; // already present in this unit, don't duplicate it again
+      }
+      const paseo = paseoFromUnit(u);
+      const km = matchKeyword(source.desc);
+      const newCid = 'blk-'+(nextCid++);
+      const newDependsOn = source.dependsOn ? (idMap[source.dependsOn] || null) : null;
+      captured.unshift({
+        n: captured.length + 1, unit: u, paseo, location: source.location,
+        desc: source.desc, sub: km ? km.sub : source.sub, trade: km ? km.trade : source.trade,
+        email: km ? km.email : source.email, area: source.area || null,
+        cid: newCid, blanket:true, blanketCount: null, dependsOn: newDependsOn, photos: []
+      });
+      idMap[source.cid] = newCid;
+    });
+  });
+  chain.forEach(source=>{
+    const totalUnits = Array.from(new Set(captured.filter(it=>norm(it.desc)===norm(source.desc)).map(it=>it.unit))).length;
+    captured.forEach(it=>{
+      if(norm(it.desc)===norm(source.desc)){ it.blanket = true; it.blanketCount = totalUnits; }
+    });
+  });
+  renderLog();
+  renderRecap();
+}
+
 // ---------- PINNED RECURRING ITEMS ----------
 // A pin is a lightweight template (desc/sub/trade/email/location/area) copied
 // off a captured row. It doesn't live in `captured` itself — it's just a
@@ -1957,11 +2116,17 @@ document.getElementById('clearLog').onclick = ()=>{
 document.getElementById('exportCapture').onclick = ()=>{
   if(captured.length===0){ showAlert('No rows captured yet.'); return; }
   const sortedForExport = captured.slice().sort((a,b)=>compareUnits(a.unit,b.unit) || compareItemsWithinUnit(a,b));
-  const rows = sortedForExport.map(it=>({
-    Unit: it.unit, Paseo: it.paseo ? ('Paseo '+it.paseo) : '', Location: it.location || 'Needs Review',
-    'Item List': it.desc, Subcontractor: it.sub || '', 'Items Remaining': '', Status: 'Pending',
-    'ResProp validation': '', Notes: ''
-  }));
+  const rows = sortedForExport.map(it=>{
+    const myNum = unitItemNumber(it);
+    const parent = it.dependsOn ? captured.find(x=>x.cid===it.dependsOn) : null;
+    let itemList = (myNum!=null ? myNum+'. ' : '') + it.desc;
+    if(parent) itemList += ' (Depends on item: ' + (parent.unit||'?') + '-' + (unitItemNumber(parent) ?? '?') + ')';
+    return {
+      Unit: it.unit, Paseo: it.paseo ? ('Paseo '+it.paseo) : '', Location: it.location || 'Needs Review',
+      'Item List': itemList, Subcontractor: it.sub || '', 'Items Remaining': '', Status: 'Pending',
+      'ResProp validation': '', Notes: ''
+    };
+  });
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Capture');
