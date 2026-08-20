@@ -575,15 +575,30 @@
         <button id="dmgModalClose" style="background:none;border:none;font-size:20px;line-height:1;color:var(--ink-soft);cursor:pointer;padding:4px;">✕</button>
       </div>
 
-      <div class="placard" style="margin-bottom:14px;">
-        <div>
-          <div class="loc">Unit</div>
-          <input class="unit-input" id="dmgUnitInput" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="— — —" autocomplete="off">
-          <div class="paseo" id="dmgPaseo">No paseo yet</div>
+      <div id="dmgModeChoice">
+        <div style="font-size:13px;color:#3B4553;margin-bottom:10px;">Where is this damage?</div>
+        <div style="display:flex;gap:10px;margin-bottom:4px;">
+          <button class="btn dark" id="dmgModeInteriorBtn" style="flex:1;">🏠 Interior (Unit)</button>
+          <button class="btn dark" id="dmgModeExteriorBtn" style="flex:1;background:var(--slate);border-color:var(--slate);">🌳 Exterior (Site)</button>
         </div>
       </div>
 
-      <div id="dmgPreCapture">
+      <div id="dmgInteriorFields" style="display:none;">
+        <div class="placard" style="margin-bottom:14px;">
+          <div>
+            <div class="loc">Unit</div>
+            <input class="unit-input" id="dmgUnitInput" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="— — —" autocomplete="off">
+            <div class="paseo" id="dmgPaseo">No paseo yet</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="dmgExteriorFields" style="display:none;margin-bottom:14px;">
+        <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Location</div>
+        <input type="text" id="dmgExtLocationInput" placeholder="e.g. Courtyard, Sidewalk near Bldg 3…" style="width:100%;box-sizing:border-box;font-size:15px;padding:10px 12px;border-radius:8px;border:1.5px solid var(--line);">
+      </div>
+
+      <div id="dmgPreCapture" style="display:none;">
         <button class="btn dark" id="dmgPhotoCaptureBtn" style="background:var(--slate);font-size:22px;line-height:1;" title="Take damage photo">📷 Take Photo</button>
       </div>
       <input type="file" id="dmgPhotoCaptureInput" accept="image/*" capture="environment" style="display:none;">
@@ -592,13 +607,13 @@
         <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Photo</div>
         <img id="dmgReviewPhoto" style="width:100%;max-height:220px;object-fit:cover;border-radius:8px;margin-bottom:12px;">
 
-        <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Responsible Subcontractor</div>
+        <div style="font-size:11px;color:#3B4553;margin-bottom:6px;" id="dmgSubLabel">Responsible Subcontractor</div>
         <div class="dictate-box" id="dictateBoxDamage" style="margin-bottom:8px;">
           <textarea class="dictate-input" id="dictateDamageSub" rows="1" placeholder="Tap here, then use your keyboard mic or type the sub's name…" autocapitalize="words" autocorrect="on"></textarea>
         </div>
         <div id="dmgSubChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;"></div>
 
-        <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Damage Details (optional)</div>
+        <div style="font-size:11px;color:#3B4553;margin-bottom:6px;" id="dmgNotesLabel">Damage Details (optional)</div>
         <div class="dictate-box" id="dictateBoxDamageNotes" style="margin-bottom:12px;">
           <textarea class="dictate-input" id="dictateDamageNotes" rows="2" placeholder="Describe the damage — tap here, then use your keyboard mic or type…" autocapitalize="sentences" autocorrect="on"></textarea>
         </div>
@@ -623,7 +638,7 @@
       <!-- read-only view -->
       <div id="dmgViewMode">
         <img id="dmgViewPhoto" style="width:100%;max-height:260px;object-fit:cover;border-radius:8px;margin-bottom:12px;">
-        <div style="font-size:11px;color:#3B4553;margin-bottom:2px;">Unit</div>
+        <div style="font-size:11px;color:#3B4553;margin-bottom:2px;">Unit / Location</div>
         <div id="dmgViewUnit" style="font-family:'Barlow Condensed';font-weight:700;font-size:22px;color:var(--ink);margin-bottom:10px;"></div>
         <div style="font-size:11px;color:#3B4553;margin-bottom:2px;">Responsible Subcontractor</div>
         <div id="dmgViewSub" style="font-size:15px;color:var(--ink);margin-bottom:10px;"></div>
@@ -640,8 +655,8 @@
       <!-- edit form -->
       <div id="dmgEditMode" style="display:none;">
         <img id="dmgEditPhoto" style="width:100%;max-height:220px;object-fit:cover;border-radius:8px;margin-bottom:12px;">
-        <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Unit</div>
-        <input class="unit-input" id="dmgEditUnitInput" type="text" inputmode="numeric" pattern="[0-9]*" style="font-size:22px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;width:100%;margin-bottom:12px;box-sizing:border-box;">
+        <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Unit / Location</div>
+        <input class="unit-input" id="dmgEditUnitInput" type="text" style="font-size:22px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;width:100%;margin-bottom:12px;box-sizing:border-box;">
 
         <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Responsible Subcontractor</div>
         <div class="dictate-box" style="margin-bottom:8px;">
@@ -3978,20 +3993,49 @@ dmgLoadFromStorage();
 function dmgUpdatePlacard(){
   document.getElementById('dmgPaseo').textContent = dmgState.paseo ? ('Paseo ' + dmgState.paseo) : 'No paseo yet';
 }
-const dmgState = { unit: '', paseo: null };
+const dmgState = { mode: null, unit: '', paseo: null, exteriorLocation: '' };
 document.getElementById('dmgUnitInput').addEventListener('input', (e)=>{
   dmgState.unit = e.target.value;
   dmgState.paseo = paseoFromUnit(e.target.value);
   dmgUpdatePlacard();
 });
 dmgUpdatePlacard();
+document.getElementById('dmgExtLocationInput').addEventListener('input', (e)=>{
+  dmgState.exteriorLocation = e.target.value;
+});
 
 // ---------- add-item modal ----------
+// Opens on a mode choice (Interior vs Exterior) so the right fields show up
+// next -- the unit placard for interior, or a free-typed Location field for
+// exterior (streets, sidewalks, courtyard, etc.), where there's no unit
+// number to work from.
 document.getElementById('dmgAddBtn').addEventListener('click', ()=>{
   document.getElementById('dmgModalOverlay').style.display = 'flex';
-  document.getElementById('dmgPreCapture').style.display = 'block';
+  document.getElementById('dmgModeChoice').style.display = 'block';
+  document.getElementById('dmgInteriorFields').style.display = 'none';
+  document.getElementById('dmgExteriorFields').style.display = 'none';
+  document.getElementById('dmgPreCapture').style.display = 'none';
   document.getElementById('dmgReviewCard').style.display = 'none';
+  dmgState.mode = null;
   dmgPendingPhoto = null;
+});
+document.getElementById('dmgModeInteriorBtn').addEventListener('click', ()=>{
+  dmgState.mode = 'interior';
+  document.getElementById('dmgModeChoice').style.display = 'none';
+  document.getElementById('dmgInteriorFields').style.display = 'block';
+  document.getElementById('dmgExteriorFields').style.display = 'none';
+  document.getElementById('dmgPreCapture').style.display = 'block';
+  document.getElementById('dmgSubLabel').textContent = 'Responsible Subcontractor';
+  document.getElementById('dmgNotesLabel').textContent = 'Damage Details (optional)';
+});
+document.getElementById('dmgModeExteriorBtn').addEventListener('click', ()=>{
+  dmgState.mode = 'exterior';
+  document.getElementById('dmgModeChoice').style.display = 'none';
+  document.getElementById('dmgInteriorFields').style.display = 'none';
+  document.getElementById('dmgExteriorFields').style.display = 'block';
+  document.getElementById('dmgPreCapture').style.display = 'block';
+  document.getElementById('dmgSubLabel').textContent = 'Responsible Subcontractor (optional)';
+  document.getElementById('dmgNotesLabel').textContent = 'Description';
 });
 document.getElementById('dmgModalClose').addEventListener('click', ()=>{
   document.getElementById('dmgModalOverlay').style.display = 'none';
@@ -4047,16 +4091,29 @@ document.getElementById('dmgCancelBtn').addEventListener('click', ()=>{
 });
 
 // Shared save logic for both "Save" and "Save & Next" — only the
-// auto-download and the pre-capture reset differ.
+// auto-download and the pre-capture reset differ. Interior items require a
+// responsible sub (same as always); exterior items require a description
+// instead, since there may not be a known responsible party yet for site
+// damage (streets, sidewalks, courtyard, etc.) and sub is optional there.
 function dmgCommitCurrentItem(){
   if(!dmgPendingPhoto) return null;
   const sub = document.getElementById('dictateDamageSub').value.trim();
-  if(!sub){ showAlert('Please enter who is responsible before saving.'); return null; }
   const notes = document.getElementById('dictateDamageNotes').value.trim();
-  const priorSameUnitSub = dmgCaptured.filter(it => it.unit===dmgState.unit && it.sub.toLowerCase()===sub.toLowerCase()).length;
+  const isExterior = dmgState.mode === 'exterior';
+  if(isExterior){
+    if(!notes){ showAlert('Please enter a description before saving.'); return null; }
+  }else{
+    if(!sub){ showAlert('Please enter who is responsible before saving.'); return null; }
+  }
+  const groupKey = isExterior ? dmgState.exteriorLocation : dmgState.unit;
+  const priorSameGroupSub = dmgCaptured.filter(it => (isExterior ? it.location : it.unit)===groupKey && (it.sub||'').toLowerCase()===sub.toLowerCase()).length;
   const item = {
-    unit: dmgState.unit, paseo: dmgState.paseo, sub: sub, notes: notes,
-    dataUrl: dmgPendingPhoto.dataUrl, seq: priorSameUnitSub + 1,
+    mode: dmgState.mode || 'interior',
+    unit: isExterior ? '' : dmgState.unit,
+    paseo: isExterior ? null : dmgState.paseo,
+    location: isExterior ? dmgState.exteriorLocation : null,
+    sub: sub, notes: notes,
+    dataUrl: dmgPendingPhoto.dataUrl, seq: priorSameGroupSub + 1,
     cid: 'dmg-' + (dmgNextCid++)
   };
   dmgCaptured.unshift(item);
@@ -4121,7 +4178,8 @@ function dmgSanitizeFileName(s){
   return String(s||'').replace(/[\/\\:*?"<>|]/g, '').replace(/\s+/g,' ').trim();
 }
 function dmgBuildFileName(it, ext){
-  let name = (it.unit ? it.unit : 'unit') + ' - ' + (it.sub || 'Unknown');
+  const place = it.mode==='exterior' ? (it.location || 'exterior') : (it.unit || 'unit');
+  let name = place + ' - ' + (it.sub || 'Unknown');
   if(it.notes) name += ' (' + it.notes + ')';
   if(it.seq > 1) name += ' #' + it.seq;
   name = dmgSanitizeFileName(name);
@@ -4168,6 +4226,13 @@ function dmgUpdateSelectCount(){
   document.getElementById('dmgSelectCount').textContent = dmgSelected.size + ' selected';
 }
 
+// Display label for the top line of a damage card/detail view: unit+paseo
+// for interior items, "Exterior · <Location>" for site/exterior items.
+function dmgLocationLabel(it){
+  if(it.mode==='exterior') return 'Exterior · ' + (it.location || '—');
+  return 'Unit ' + (it.unit||'—') + (it.paseo?(' · Paseo '+it.paseo):'');
+}
+
 function renderDmgLog(){
   document.getElementById('dmgLogCount').textContent = dmgCaptured.length;
   dmgPopulateSubFilter();
@@ -4187,8 +4252,8 @@ function renderDmgLog(){
         ? `<img src="${it.dataUrl}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;">`
         : `<div style="width:56px;height:56px;border-radius:6px;flex-shrink:0;background:#EDE7DD;display:flex;align-items:center;justify-content:center;font-size:20px;">📷</div>`}
       <div>
-        <div class="row1"><span>Unit ${it.unit||'—'}${it.paseo?(' · Paseo '+it.paseo):''}</span></div>
-        <div class="sub"><span class="dot"></span>${it.sub}${it.seq>1?(' · #'+it.seq):''}</div>
+        <div class="row1"><span>${dmgLocationLabel(it)}</span></div>
+        ${it.sub ? `<div class="sub"><span class="dot"></span>${it.sub}${it.seq>1?(' · #'+it.seq):''}</div>` : ''}
         ${it.notes?('<div class="desc">'+it.notes+'</div>'):''}
       </div>
     </div>`).join('');
@@ -4232,8 +4297,9 @@ document.getElementById('dmgDownloadPhotosBtn').addEventListener('click', ()=>{
 document.getElementById('dmgDownloadExcelBtn').addEventListener('click', ()=>{
   if(dmgSelected.size===0){ showAlert('Select at least one item first.'); return; }
   const rows = dmgCaptured.filter(it=>dmgSelected.has(it.cid)).map(it=>({
-    Unit: it.unit || '', Paseo: it.paseo || '', 'Responsible Sub': it.sub || '',
-    'Damage Details': it.notes || ''
+    Type: it.mode==='exterior' ? 'Exterior' : 'Interior',
+    Unit: it.unit || '', Paseo: it.paseo || '', Location: it.location || '',
+    'Responsible Sub': it.sub || '', 'Damage Details': it.notes || ''
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
@@ -4250,7 +4316,7 @@ async function dmgBuildItemPdf(it){
   doc.setFont('helvetica','bold'); doc.setFontSize(18);
   doc.text('Damage Report', 40, y); y += 26;
   doc.setFontSize(11); doc.setFont('helvetica','normal');
-  doc.text('Unit: ' + (it.unit||'—') + (it.paseo?('   Paseo: '+it.paseo):''), 40, y); y += 16;
+  doc.text(dmgLocationLabel(it), 40, y); y += 16;
   doc.text('Responsible Subcontractor: ' + (it.sub||'—'), 40, y); y += 16;
   if(it.notes){
     const lines = doc.splitTextToSize('Details: ' + it.notes, pageW - 80);
@@ -4303,7 +4369,7 @@ document.getElementById('dmgDownloadReportBtn').addEventListener('click', async 
     }
     y += imgH + 20;
     doc.setFont('helvetica','bold'); doc.setFontSize(11);
-    doc.text('Unit ' + (it.unit||'—') + (it.paseo?(' · Paseo '+it.paseo):''), x+8, y);
+    doc.text(dmgLocationLabel(it), x+8, y);
     y += 14;
     doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
     doc.text('Sub: ' + (it.sub||'—'), x+8, y);
@@ -4324,7 +4390,7 @@ function dmgOpenView(cid){
   dmgViewingCid = cid;
   document.getElementById('dmgViewPhoto').src = it.dataUrl || '';
   document.getElementById('dmgViewPhoto').style.display = it.dataUrl ? 'block' : 'none';
-  document.getElementById('dmgViewUnit').textContent = (it.unit||'—') + (it.paseo?(' · Paseo '+it.paseo):'');
+  document.getElementById('dmgViewUnit').textContent = dmgLocationLabel(it);
   document.getElementById('dmgViewSub').textContent = it.sub || '—';
   document.getElementById('dmgViewNotes').textContent = it.notes || '(none)';
   document.getElementById('dmgViewMode').style.display = 'block';
@@ -4356,7 +4422,8 @@ document.getElementById('dmgViewEditBtn').addEventListener('click', ()=>{
   if(!it) return;
   document.getElementById('dmgEditPhoto').src = it.dataUrl || '';
   document.getElementById('dmgEditPhoto').style.display = it.dataUrl ? 'block' : 'none';
-  document.getElementById('dmgEditUnitInput').value = it.unit || '';
+  // Interior edits the Unit number; exterior edits the typed Location text.
+  document.getElementById('dmgEditUnitInput').value = it.mode==='exterior' ? (it.location||'') : (it.unit||'');
   document.getElementById('dmgEditSubInput').value = it.sub || '';
   document.getElementById('dmgEditNotesInput').value = it.notes || '';
   document.getElementById('dmgEditSubChips').querySelectorAll('.dmg-edit-sub-chip').forEach(c=>{
@@ -4372,13 +4439,20 @@ document.getElementById('dmgEditCancelBtn').addEventListener('click', ()=>{
 document.getElementById('dmgEditSaveBtn').addEventListener('click', ()=>{
   const it = dmgCaptured.find(x=>x.cid===dmgViewingCid);
   if(!it) return;
-  const newUnit = document.getElementById('dmgEditUnitInput').value.trim();
+  const newValue = document.getElementById('dmgEditUnitInput').value.trim();
   const newSub = document.getElementById('dmgEditSubInput').value.trim();
-  if(!newSub){ showAlert('Please enter who is responsible before saving.'); return; }
-  it.unit = newUnit;
-  it.paseo = paseoFromUnit(newUnit);
+  const newNotes = document.getElementById('dmgEditNotesInput').value.trim();
+  const isExterior = it.mode === 'exterior';
+  if(isExterior){
+    if(!newNotes){ showAlert('Please enter a description before saving.'); return; }
+    it.location = newValue;
+  }else{
+    if(!newSub){ showAlert('Please enter who is responsible before saving.'); return; }
+    it.unit = newValue;
+    it.paseo = paseoFromUnit(newValue);
+  }
   it.sub = newSub;
-  it.notes = document.getElementById('dmgEditNotesInput').value.trim();
+  it.notes = newNotes;
   dmgSaveToStorage();
   renderDmgLog();
   dmgOpenView(dmgViewingCid); // back to view mode showing updated values
