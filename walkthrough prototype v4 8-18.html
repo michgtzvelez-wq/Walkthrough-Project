@@ -2905,7 +2905,12 @@ function renderStatusTable(filter){
     // so an owner acceptance walk can add, correct, and blanket items on
     // the fly without leaving this tab. Imported sheet rows don't get these
     // — editing hundreds of Mechanical rows this way isn't the intent.
-    const isAddedHere = !!r._addedHere;
+    // _addedHere covers items just added this session. Item List of
+    // 'Acceptance' or 'Validation' covers the same items after an
+    // export/reimport round-trip -- those two labels are only ever set by
+    // this Add Item form, never by the original Mechanical import, so
+    // they're a reliable stand-in once the internal marker is gone.
+    const isAddedHere = !!r._addedHere || category==='Acceptance' || category==='Validation';
     const parentRow = (isAddedHere && r._dependsOnId) ? mainData.find(x=>x.id===r._dependsOnId) : null;
     const parentDescKey = parentRow ? descriptionColumnKeyFromRow(parentRow) : null;
     const extraIconsRow = isAddedHere ? `
