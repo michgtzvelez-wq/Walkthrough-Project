@@ -1509,6 +1509,7 @@ function openEditModal(cid){
   editingCid = cid;
   editingStatusId = null;
   document.getElementById('editAreaFieldWrap').style.display = 'block';
+  document.getElementById('editItemListFieldWrap').style.display = 'none';
   document.getElementById('editUnitInput').value = item.unit || '';
   document.getElementById('editDescInput').value = item.desc || '';
   document.getElementById('editLocationSelect').value = item.location || '';
@@ -1529,6 +1530,12 @@ function openStatusEditModal(id){
   editingStatusId = id;
   editingCid = null;
   document.getElementById('editAreaFieldWrap').style.display = 'none';
+  document.getElementById('editItemListFieldWrap').style.display = 'block';
+  const listSel = document.getElementById('editItemListSelect');
+  const currentList = row['Item List'] || 'Acceptance';
+  listSel.innerHTML = `<option value="Acceptance">Acceptance</option><option value="Validation">Validation</option>`
+    + (currentList!=='Acceptance' && currentList!=='Validation' ? `<option value="${currentList}">${currentList} (current)</option>` : '');
+  listSel.value = currentList;
   const descKey = descriptionColumnKeyFromRow(row) || descriptionColumnKey();
   document.getElementById('editUnitInput').value = row.Unit || '';
   document.getElementById('editDescInput').value = row[descKey] || '';
@@ -1581,6 +1588,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
       const newDesc = document.getElementById('editDescInput').value.trim();
       if(newDesc) row[descKey] = newDesc;
       row.Location = document.getElementById('editLocationSelect').value || '';
+      row['Item List'] = document.getElementById('editItemListSelect').value || row['Item List'];
 
       const subSel = document.getElementById('editSubSelect');
       if(subSel.value==='other'){
@@ -4887,6 +4895,14 @@ document.getElementById('dmgEditSaveBtn').addEventListener('click', ()=>{
     <div class="edit-field-label">Subcontractor</div>
     <select id="editSubSelect" class="edit-field-input"></select>
     <input type="text" id="editSubOtherInput" class="edit-field-input" style="display:none;margin-top:6px;" placeholder="Type subcontractor name">
+
+    <div id="editItemListFieldWrap">
+      <div class="edit-field-label">Item List</div>
+      <select id="editItemListSelect" class="edit-field-input">
+        <option value="Acceptance">Acceptance</option>
+        <option value="Validation">Validation</option>
+      </select>
+    </div>
 
     <div class="edit-field-label">Location</div>
     <select id="editLocationSelect" class="edit-field-input">
