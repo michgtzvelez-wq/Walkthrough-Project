@@ -1494,34 +1494,66 @@ function bindItemCardHandlers(container){
 }
 
 // ---------- CONSOLIDATED EDIT MODAL ----------
+// Shared between New Capture items (captured array, keyed by cid) and
+// Update-Status walk-added items (mainData array, keyed by numeric id).
+// editingSource tracks which one is currently open so Save/Cancel know
+// which array and field names to write back to.
 let editingCid = null;
+let editingStatusId = null;
+let editingSource = 'capture'; // 'capture' | 'status'
+
 function openEditModal(cid){
   const item = captured.find(x=>x.cid===cid);
   if(!item) return;
+  editingSource = 'capture';
   editingCid = cid;
+  editingStatusId = null;
+  document.getElementById('editAreaFieldWrap').style.display = 'block';
   document.getElementById('editUnitInput').value = item.unit || '';
   document.getElementById('editDescInput').value = item.desc || '';
   document.getElementById('editLocationSelect').value = item.location || '';
-
-  const subSel = document.getElementById('editSubSelect');
-  const subs = uniqueSubs();
-  subSel.innerHTML = `<option value="">Not set</option>` +
-    subs.map((s,i)=>`<option value="${i}" ${item.sub===s.sub?'selected':''}>${s.sub} (${s.trade})</option>`).join('') +
-    `<option value="other" ${item.sub && !subs.some(s=>s.sub===item.sub) ? 'selected':''}>Other (type name)\u2026</option>`;
-  const otherInp = document.getElementById('editSubOtherInput');
-  if(item.sub && !subs.some(s=>s.sub===item.sub)){
-    otherInp.style.display = 'block';
-    otherInp.value = item.sub;
-  } else {
-    otherInp.style.display = 'none';
-    otherInp.value = '';
-  }
+  populateEditSubPicker(item.sub);
 
   const areaSel = document.getElementById('editAreaSelect');
   areaSel.innerHTML = `<option value="">Not set</option>` + AREAS.map(a=>`<option value="${a}" ${item.area===a?'selected':''}>${a}</option>`).join('');
 
   document.getElementById('editItemOverlay').style.display = 'flex';
 }
+
+// Same modal, populated from a mainData row instead (Update Status tab's
+// walk-added items). Area field is hidden since status rows don't track it.
+function openStatusEditModal(id){
+  const row = mainData.find(r=>r.id===id);
+  if(!row) return;
+  editingSource = 'status';
+  editingStatusId = id;
+  editingCid = null;
+  document.getElementById('editAreaFieldWrap').style.display = 'none';
+  const descKey = descriptionColumnKeyFromRow(row) || descriptionColumnKey();
+  document.getElementById('editUnitInput').value = row.Unit || '';
+  document.getElementById('editDescInput').value = row[descKey] || '';
+  document.getElementById('editLocationSelect').value = row.Location || '';
+  populateEditSubPicker(row.Subcontractor || row.Sub || '');
+
+  document.getElementById('editItemOverlay').style.display = 'flex';
+}
+
+function populateEditSubPicker(currentSub){
+  const subSel = document.getElementById('editSubSelect');
+  const subs = uniqueSubs();
+  subSel.innerHTML = `<option value="">Not set</option>` +
+    subs.map((s,i)=>`<option value="${i}" ${currentSub===s.sub?'selected':''}>${s.sub} (${s.trade})</option>`).join('') +
+    `<option value="other" ${currentSub && !subs.some(s=>s.sub===currentSub) ? 'selected':''}>Other (type name)\u2026</option>`;
+  const otherInp = document.getElementById('editSubOtherInput');
+  if(currentSub && !subs.some(s=>s.sub===currentSub)){
+    otherInp.style.display = 'block';
+    otherInp.value = currentSub;
+  } else {
+    otherInp.style.display = 'none';
+    otherInp.value = '';
+  }
+}
+
 window.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('editSubSelect').addEventListener('change', (e)=>{
     document.getElementById('editSubOtherInput').style.display = e.target.value==='other' ? 'block' : 'none';
@@ -1529,8 +1561,42 @@ window.addEventListener('DOMContentLoaded', ()=>{
   document.getElementById('editItemCancel').addEventListener('click', ()=>{
     document.getElementById('editItemOverlay').style.display = 'none';
     editingCid = null;
+    editingStatusId = null;
   });
   document.getElementById('editItemSave').addEventListener('click', ()=>{
+    if(editingSource==='status'){
+      const row = mainData.find(r=>r.id===editingStatusId);
+      if(!row) return;
+      const newUnit = document.getElementById('editUnitInput').value.trim();
+      if(newUnit && !isValidUnitNumber(newUnit)){
+        showAlert('That unit number doesn\'t look right \u2014 double check the building, floor, and unit digits.');
+        return;
+      }
+      if(newUnit){
+        row.Unit = newUnit;
+        const p = paseoFromUnitDigits(newUnit);
+        if(p) row.Paseo = 'Paseo ' + p;
+      }
+      const descKey = descriptionColumnKeyFromRow(row) || descriptionColumnKey();
+      const newDesc = document.getElementById('editDescInput').value.trim();
+      if(newDesc) row[descKey] = newDesc;
+      row.Location = document.getElementById('editLocationSelect').value || '';
+
+      const subSel = document.getElementById('editSubSelect');
+      if(subSel.value==='other'){
+        const val = document.getElementById('editSubOtherInput').value.trim();
+        if(val){ row.Subcontractor = val; row._subTrade = 'Other'; row._subEmail = ''; }
+      } else if(subSel.value!==''){
+        const chosen = uniqueSubs()[parseInt(subSel.value,10)];
+        if(chosen){ row.Subcontractor = chosen.sub; row._subTrade = chosen.trade; row._subEmail = chosen.email; }
+      }
+
+      document.getElementById('editItemOverlay').style.display = 'none';
+      editingStatusId = null;
+      renderStatusTable(document.getElementById('searchBox').value);
+      return;
+    }
+
     const item = captured.find(x=>x.cid===editingCid);
     if(!item) return;
     const newUnit = document.getElementById('editUnitInput').value.trim();
@@ -2744,8 +2810,11 @@ document.getElementById('newItemAddBtn').addEventListener('click', ()=>{
     Subcontractor: sub,
     Status: 'Pending',
     'Report Date': todayFormatted(),
-    'Unit Accepted?': ''
+    'Unit Accepted?': '',
+    _addedHere: true
   };
+  if(trade) fields._subTrade = trade;
+  if(email) fields._subEmail = email;
   fields[descriptionColumnKey()] = text;
   fields[resPropValidationKey()] = '';
   fields[clValidationDateKey()] = '';
@@ -2831,10 +2900,38 @@ function renderStatusTable(filter){
             <option value="">Pick subcontractor…</option>
             ${uniqueSubs().map((s,i)=>`<option value="${i}">${s.sub} (${s.trade})</option>`).join('')}
           </select>` : '';
+    // Items added right here during a walk (Add Item form) get the same
+    // edit / duplicate / dependent-chain / delete controls as New Capture,
+    // so an owner acceptance walk can add, correct, and blanket items on
+    // the fly without leaving this tab. Imported sheet rows don't get these
+    // — editing hundreds of Mechanical rows this way isn't the intent.
+    const isAddedHere = !!r._addedHere;
+    const parentRow = (isAddedHere && r._dependsOnId) ? mainData.find(x=>x.id===r._dependsOnId) : null;
+    const parentDescKey = parentRow ? descriptionColumnKeyFromRow(parentRow) : null;
+    const extraIconsRow = isAddedHere ? `
+      <div class="icon-row" style="margin-top:6px;">
+        <button class="icon-btn status-edit-btn" data-id="${r.id}" title="Edit">✏️</button>
+        <button class="icon-btn status-dup-btn" data-id="${r.id}" title="Duplicate…">x²</button>
+        <button class="icon-btn status-chain-btn" data-id="${r.id}" title="Add dependent item">🔗</button>
+        <button class="icon-btn danger status-delete-btn" data-id="${r.id}" title="Delete">🗑️</button>
+      </div>
+      ${parentRow ? `<div class="meta" style="color:#B8862E;">🔗 Depends on: ${parentRow.Unit||'?'} — ${((parentDescKey && parentRow[parentDescKey]) || '').toString().slice(0,50)}</div>` : ''}
+      ${r._blanket
+        ? `<div style="font-size:11px;color:#3F8557;font-weight:600;margin-top:6px;">Duplicated to ${r._blanketCount} unit(s)</div>`
+        : `<div class="dup-scope-status" data-scope-for="${r.id}" style="display:none;margin-top:8px;background:#E9E4D8;border-radius:8px;padding:10px;">
+             <div style="font-size:11px;color:#3B4553;margin-bottom:6px;">Duplicate this item to:</div>
+             <button class="status-scope-all-btn" data-id="${r.id}" style="font-size:11px;padding:6px 10px;border-radius:6px;border:none;background:#45607A;color:#FFFDF9;cursor:pointer;margin-right:6px;margin-bottom:6px;">All units in building</button>
+             <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+               <input class="status-scope-units-input" data-id="${r.id}" placeholder="e.g. 01, 02 or 8101, 8102" style="flex:1;font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid #D8CFBC;">
+               <button class="status-scope-specific-btn" data-id="${r.id}" style="font-size:11px;padding:6px 10px;border-radius:6px;border:none;background:#E85D2F;color:#FFFDF9;cursor:pointer;">Apply</button>
+             </div>
+           </div>`
+      }
+    ` : '';
     return `
     <div class="trow ${r.id===lastUpdatedId?'updated':''}" data-id="${r.id}" style="background:${rowTint};">
       <div class="id">#${r.id}</div>
-      <div class="txt">${desc}<div class="meta">Unit ${r.Unit||''}${category?' · '+category:''}${sub?' · '+sub:''} · Currently: ${choice ? choice+' (unconfirmed)' : effective}</div>${subPicker}</div>
+      <div class="txt">${desc}<div class="meta">Unit ${r.Unit||''}${category?' · '+category:''}${sub?' · '+sub:''} · Currently: ${choice ? choice+' (unconfirmed)' : effective}</div>${subPicker}${extraIconsRow}</div>
       <div class="statusbtns" style="display:flex;gap:4px;">
         <button class="statusbtn" data-id="${r.id}" data-choice="Done" style="${btnStyle('Done','#3F8A5E')};border:none;border-radius:6px;padding:6px 8px;font-size:11px;">Done</button>
         <button class="statusbtn" data-id="${r.id}" data-choice="Pending" style="${btnStyle('Pending','#E8A93F')};border:none;border-radius:6px;padding:6px 8px;font-size:11px;">Pending</button>
@@ -2843,6 +2940,8 @@ function renderStatusTable(filter){
     </div>
   `;
   }).join('') || '<div style="padding:16px;color:#3B4553;font-size:13px;">No results.</div>';
+
+  bindStatusItemExtraHandlers();
 
   document.querySelectorAll('#statusTable .statusbtn').forEach(btn=>{
     btn.addEventListener('click', (ev)=>{
@@ -2877,6 +2976,263 @@ function renderStatusTable(filter){
 }
 renderStatusTable('');
 document.getElementById('searchBox').oninput = (e)=>renderStatusTable(e.target.value);
+
+// ---------- Extra item actions on Update-Status "Add Item" rows ----------
+// Mirrors New Capture's edit / duplicate-to-units / dependency-chain / delete
+// behavior, adapted to mainData's row shape (keyed by numeric id, dynamic
+// column names) instead of captured's cid-based items.
+let dupChainSelectionStatus = {};
+
+function getStatusUnitRoster(){
+  // Unlike New Capture (which may have no file loaded yet and has to invent
+  // a theoretical 36-unit roster), Update Status always has a real sheet
+  // loaded, so the roster is just every unit actually present in it.
+  return Array.from(new Set(mainData.map(r=>String(r.Unit)).filter(Boolean))).sort();
+}
+
+function getDependencyChainStatus(id){
+  let root = mainData.find(r=>r.id===id);
+  if(!root) return [];
+  while(root._dependsOnId){
+    const parent = mainData.find(r=>r.id===root._dependsOnId);
+    if(!parent) break;
+    root = parent;
+  }
+  const chain = [root];
+  let current = root;
+  while(true){
+    const child = mainData.find(r=>r._dependsOnId===current.id);
+    if(!child) break;
+    chain.push(child);
+    current = child;
+  }
+  return chain;
+}
+
+function deleteStatusItem(id){
+  const row = mainData.find(r=>r.id===id);
+  if(!row) return;
+  showConfirm('Delete this item? This cannot be undone.', ()=>{
+    mainData = mainData.filter(r=>r.id!==id);
+    renderStatusTable(document.getElementById('searchBox').value);
+  });
+}
+
+function addDependentStatusItem(parentId){
+  const parent = mainData.find(r=>r.id===parentId);
+  if(!parent) return;
+  showPrompt('Describe the dependent item (added to unit ' + (parent.Unit||'?') + ', linked after this one):', '', (val)=>{
+    if(!val || !val.trim()) return;
+    const raw = val.trim();
+    const km = matchKeyword(raw);
+    const descKey = descriptionColumnKey();
+    const fields = {
+      Unit: parent.Unit,
+      Paseo: parent.Paseo || '',
+      Location: parent.Location || '',
+      'Item List': parent['Item List'] || newItemSelectedType || '',
+      Subcontractor: km ? km.sub : '',
+      Status: 'Pending',
+      'Report Date': todayFormatted(),
+      'Unit Accepted?': '',
+      _addedHere: true,
+      _dependsOnId: parentId
+    };
+    if(km){ fields._subTrade = km.trade; fields._subEmail = km.email; }
+    fields[descKey] = raw;
+    fields[resPropValidationKey()] = '';
+    fields[clValidationDateKey()] = '';
+    mainData.push(buildNewStatusRow(fields));
+    populateUnitButtons();
+    populateStatusFilter();
+    renderStatusTable(document.getElementById('searchBox').value);
+  });
+}
+
+function applyBlanketStatusItem(id){
+  applyBlanketToScopeStatus(id, getStatusUnitRoster());
+}
+
+function applyBlanketStatusItemToUnits(id, rawScopeText){
+  const allUnits = getStatusUnitRoster();
+  const targetUnits = resolveUnitsFromScopeText(rawScopeText, allUnits);
+  if(targetUnits.length===0){
+    showAlert('Could not match any units from "'+rawScopeText+'". Try unit endings like 01, 02 or full unit numbers.');
+    return;
+  }
+  applyBlanketToScopeStatus(id, targetUnits);
+}
+
+function applyBlanketToScopeStatus(id, targetUnits){
+  const source = mainData.find(r=>r.id===id);
+  if(!source) return;
+  const descKey = descriptionColumnKeyFromRow(source) || descriptionColumnKey();
+  const srcDesc = source[descKey] || '';
+  const unitsAlreadyHavingIt = new Set(
+    mainData.filter(r=>{
+      const k = descriptionColumnKeyFromRow(r) || descKey;
+      return norm(r[k]||'')===norm(srcDesc);
+    }).map(r=>String(r.Unit))
+  );
+  const unitsToAdd = targetUnits.filter(u=>!unitsAlreadyHavingIt.has(String(u)));
+  unitsToAdd.forEach(u=>{
+    const paseoVal = 'Paseo ' + (paseoFromUnitDigits(u) || '');
+    const km = matchKeyword(srcDesc);
+    const fields = {
+      Unit: u, Paseo: paseoVal, Location: source.Location || '',
+      'Item List': source['Item List'] || '', Subcontractor: km ? km.sub : (source.Subcontractor||''),
+      Status: 'Pending', 'Report Date': todayFormatted(), 'Unit Accepted?': '',
+      _addedHere: true
+    };
+    if(km){ fields._subTrade = km.trade; fields._subEmail = km.email; }
+    fields[descKey] = srcDesc;
+    fields[resPropValidationKey()] = '';
+    fields[clValidationDateKey()] = '';
+    mainData.push(buildNewStatusRow(fields));
+  });
+  const totalUnits = Array.from(new Set(mainData.filter(r=>{
+    const k = descriptionColumnKeyFromRow(r) || descKey;
+    return norm(r[k]||'')===norm(srcDesc);
+  }).map(r=>String(r.Unit)))).length;
+  mainData.forEach(r=>{
+    const k = descriptionColumnKeyFromRow(r) || descKey;
+    if(norm(r[k]||'')===norm(srcDesc)){ r._blanket = true; r._blanketCount = totalUnits; }
+  });
+  populateUnitButtons();
+  populateStatusFilter();
+}
+
+// Duplicates a whole dependency chain of status-added items to each target
+// unit, remapping each copy's _dependsOnId to the newly created copy of its
+// parent in that same unit (not back to the original chain).
+function applyBlanketChainToScopeStatus(id, targetUnits){
+  const chain = getDependencyChainStatus(id);
+  if(chain.length<=1){ applyBlanketToScopeStatus(id, targetUnits); return; }
+  targetUnits.forEach(u=>{
+    const idMap = {};
+    chain.forEach(source=>{
+      const dKey = descriptionColumnKeyFromRow(source) || descriptionColumnKey();
+      const srcDesc = source[dKey] || '';
+      const existing = mainData.find(r=>{
+        const k = descriptionColumnKeyFromRow(r) || dKey;
+        return String(r.Unit)===String(u) && norm(r[k]||'')===norm(srcDesc);
+      });
+      if(existing){ idMap[source.id] = existing.id; return; }
+      const paseoVal = 'Paseo ' + (paseoFromUnitDigits(u) || '');
+      const km = matchKeyword(srcDesc);
+      const fields = {
+        Unit: u, Paseo: paseoVal, Location: source.Location || '',
+        'Item List': source['Item List'] || '', Subcontractor: km ? km.sub : (source.Subcontractor||''),
+        Status: 'Pending', 'Report Date': todayFormatted(), 'Unit Accepted?': '',
+        _addedHere: true, _dependsOnId: source._dependsOnId ? (idMap[source._dependsOnId] || null) : null
+      };
+      if(km){ fields._subTrade = km.trade; fields._subEmail = km.email; }
+      fields[dKey] = srcDesc;
+      fields[resPropValidationKey()] = '';
+      fields[clValidationDateKey()] = '';
+      const newRow = buildNewStatusRow(fields);
+      mainData.push(newRow);
+      idMap[source.id] = newRow.id;
+    });
+  });
+  const rootDKey = descriptionColumnKeyFromRow(chain[0]) || descriptionColumnKey();
+  const rootDesc = chain[0][rootDKey] || '';
+  const totalUnits = Array.from(new Set(mainData.filter(r=>{
+    const k = descriptionColumnKeyFromRow(r) || rootDKey;
+    return norm(r[k]||'')===norm(rootDesc);
+  }).map(r=>String(r.Unit)))).length;
+  mainData.forEach(r=>{
+    const k = descriptionColumnKeyFromRow(r) || rootDKey;
+    if(norm(r[k]||'')===norm(rootDesc)){ r._blanket = true; r._blanketCount = totalUnits; }
+  });
+  populateUnitButtons();
+  populateStatusFilter();
+}
+
+function bindStatusItemExtraHandlers(){
+  document.querySelectorAll('#statusTable .status-edit-btn').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      openStatusEditModal(parseInt(btn.getAttribute('data-id'),10));
+    });
+  });
+  document.querySelectorAll('#statusTable .status-delete-btn').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      deleteStatusItem(parseInt(btn.getAttribute('data-id'),10));
+    });
+  });
+  document.querySelectorAll('#statusTable .status-chain-btn').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      addDependentStatusItem(parseInt(btn.getAttribute('data-id'),10));
+    });
+  });
+  document.querySelectorAll('#statusTable .status-dup-btn').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const id = parseInt(btn.getAttribute('data-id'),10);
+      const panel = document.querySelector(`.dup-scope-status[data-scope-for="${id}"]`);
+      const chain = getDependencyChainStatus(id);
+      if(chain.length<=1){
+        dupChainSelectionStatus[id] = 'single';
+        if(panel) panel.style.display = panel.style.display==='none' ? 'block' : 'none';
+        return;
+      }
+      const listText = chain.map((it,i)=>{
+        const k = descriptionColumnKeyFromRow(it) || descriptionColumnKey();
+        return (i+1)+') '+(it[k]||'');
+      }).join('\n');
+      showModal(
+        'This item is linked in a dependency chain of ' + chain.length + ' item(s):\n' + listText + '\n\nDuplicate just this item, or the whole chain?',
+        [
+          { label:'This item only', primary:false, onClick: ()=>{
+              dupChainSelectionStatus[id] = 'single';
+              if(panel) panel.style.display = 'block';
+            } },
+          { label:'Whole chain (' + chain.length + ')', primary:true, onClick: ()=>{
+              dupChainSelectionStatus[id] = 'chain';
+              if(panel) panel.style.display = 'block';
+            } }
+        ]
+      );
+      const msgEl = document.getElementById('customModalMessage');
+      if(msgEl) msgEl.style.whiteSpace = 'pre-line';
+    });
+  });
+  document.querySelectorAll('#statusTable .status-scope-all-btn').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const id = parseInt(btn.getAttribute('data-id'),10);
+      if(dupChainSelectionStatus[id]==='chain'){
+        applyBlanketChainToScopeStatus(id, getStatusUnitRoster());
+      } else {
+        applyBlanketStatusItem(id);
+      }
+      renderStatusTable(document.getElementById('searchBox').value);
+    });
+  });
+  document.querySelectorAll('#statusTable .status-scope-specific-btn').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const id = parseInt(btn.getAttribute('data-id'),10);
+      const input = document.querySelector(`.status-scope-units-input[data-id="${id}"]`);
+      const raw = input ? input.value : '';
+      if(dupChainSelectionStatus[id]==='chain'){
+        const allUnits = getStatusUnitRoster();
+        const targetUnits = resolveUnitsFromScopeText(raw, allUnits);
+        if(targetUnits.length===0){
+          showAlert('Could not match any units from "'+raw+'". Try unit endings like 01, 02 or full unit numbers.');
+          return;
+        }
+        applyBlanketChainToScopeStatus(id, targetUnits);
+      } else {
+        applyBlanketStatusItemToUnits(id, raw);
+      }
+      renderStatusTable(document.getElementById('searchBox').value);
+    });
+  });
+}
 
 let backdateOverride = null;
 
@@ -3145,7 +3501,11 @@ function triggerXlsxDownload(wb, filename){
 }
 
 document.getElementById('exportStatus').onclick = ()=>{
-  const rows = mainData.map(({id, ...rest})=>rest);
+  const rows = mainData.map(row=>{
+    const rest = {};
+    Object.keys(row).forEach(k=>{ if(k!=='id' && !k.startsWith('_')) rest[k] = row[k]; });
+    return rest;
+  });
   const newWs = XLSX.utils.json_to_sheet(rows);
   let wbToWrite;
   if(workbookRef && activeSheetName){
@@ -4308,6 +4668,33 @@ document.getElementById('dmgDownloadExcelBtn').addEventListener('click', ()=>{
 });
 
 // ---------- PDF: single item ----------
+// Downscales + recompresses a photo before it goes into a PDF. jsPDF embeds
+// whatever image data you hand it at full resolution regardless of the
+// on-page display size, so a full camera-resolution photo (often several MB)
+// bloats the PDF even though it's only shown a few inches wide. This keeps
+// the original full-quality dataUrl untouched everywhere else (list, "Photo
+// Only" download, etc.) -- it's only used right before addImage.
+function dmgCompressImageForPdf(dataUrl, maxDim, quality){
+  return new Promise((resolve)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let w = img.width, h = img.height;
+      if(w > maxDim || h > maxDim){
+        const scale = maxDim / Math.max(w, h);
+        w = Math.max(1, Math.round(w*scale));
+        h = Math.max(1, Math.round(h*scale));
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = ()=> resolve(dataUrl); // fall back to the original if it somehow fails to load
+    img.src = dataUrl;
+  });
+}
+
 async function dmgBuildItemPdf(it){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
@@ -4327,7 +4714,8 @@ async function dmgBuildItemPdf(it){
     try{
       const imgW = pageW - 80;
       const imgH = imgW * 0.66;
-      doc.addImage(it.dataUrl, 'JPEG', 40, y, imgW, imgH);
+      const compressed = await dmgCompressImageForPdf(it.dataUrl, 1400, 0.72);
+      doc.addImage(compressed, 'JPEG', 40, y, imgW, imgH);
     }catch(e){ /* image failed to embed, PDF still has text details */ }
   }
   return doc;
@@ -4357,7 +4745,8 @@ document.getElementById('dmgDownloadReportBtn').addEventListener('click', async 
   const cellH = (pageH - margin*3) / 2;
   const positions = [[margin,margin],[margin*2+cellW,margin],[margin,margin*2+cellH],[margin*2+cellW,margin*2+cellH]];
 
-  items.forEach((it, i)=>{
+  for(let i=0; i<items.length; i++){
+    const it = items[i];
     const slot = i % 4;
     if(i>0 && slot===0) doc.addPage();
     const [x, y0] = positions[slot];
@@ -4365,7 +4754,10 @@ document.getElementById('dmgDownloadReportBtn').addEventListener('click', async 
     doc.setDrawColor(200); doc.rect(x, y, cellW, cellH);
     const imgH = cellW * 0.55;
     if(it.dataUrl){
-      try{ doc.addImage(it.dataUrl, 'JPEG', x+6, y+6, cellW-12, imgH); }catch(e){}
+      try{
+        const compressed = await dmgCompressImageForPdf(it.dataUrl, 700, 0.65);
+        doc.addImage(compressed, 'JPEG', x+6, y+6, cellW-12, imgH);
+      }catch(e){}
     }
     y += imgH + 20;
     doc.setFont('helvetica','bold'); doc.setFontSize(11);
@@ -4378,7 +4770,7 @@ document.getElementById('dmgDownloadReportBtn').addEventListener('click', async 
       const lines = doc.splitTextToSize(it.notes, cellW - 16);
       doc.text(lines.slice(0,3), x+8, y);
     }
-  });
+  }
   doc.save('Damages_Report.pdf');
 });
 
@@ -4499,8 +4891,10 @@ document.getElementById('dmgEditSaveBtn').addEventListener('click', ()=>{
       <option value="Unit">Unit</option>
     </select>
 
-    <div class="edit-field-label">Area</div>
-    <select id="editAreaSelect" class="edit-field-input"></select>
+    <div id="editAreaFieldWrap">
+      <div class="edit-field-label">Area</div>
+      <select id="editAreaSelect" class="edit-field-input"></select>
+    </div>
 
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
       <button class="btn" id="editItemCancel" style="flex:0 0 auto;padding:10px 16px;">Cancel</button>
